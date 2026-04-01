@@ -20,6 +20,7 @@ from placement import (
     generate_placement_input,
     train_placement,
     calculate_cells_with_overlaps,
+    calculate_normalized_metrics,
     CellFeatureIdx,
 )
 
@@ -119,33 +120,31 @@ def plot_placement(
     final_cell_features: torch.Tensor,
     pin_features: torch.Tensor,
     edge_list: torch.Tensor,
-    phase1_cell_features: torch.Tensor | None = None,
+    phase1_cell_features: torch.Tensor,
+    phase2_cell_features: torch.Tensor,
     show_wires: bool = False,
     filename: str = "placement_result.png",
     show: bool = False,
 ):
-    """Side-by-side initial vs final placement (2 panels), or 3-panel when
-    phase1_cell_features is provided (warmup init mode).
+    """2×2 placement visualization across all three training phases.
+
+        top-left:     Initial (origin)
+        top-right:    After phase 1 — wirelength centroid
+        bottom-left:  After phase 2 — first zero-overlap
+        bottom-right: Final — phase 3 wirelength tuning
 
     Cells are colour-coded (macros = orange, std cells = teal).
     Cells involved in overlaps are highlighted in red.
-    Pass show_wires=True to draw wire connections (can be noisy).
+    Pass show_wires=True to draw wire connections (can be noisy at scale).
     """
-    if phase1_cell_features is not None:
-        fig, axes = plt.subplots(1, 3, figsize=(24, 8))
-        panels = [
-            (axes[0], initial_cell_features,  "Initial (origin)"),
-            (axes[1], phase1_cell_features,   "After phase 1 — wirelength warmup"),
-            (axes[2], final_cell_features,    "Final"),
-        ]
-        legend_anchor = (0.5, 0.01)
-    else:
-        fig, axes = plt.subplots(1, 2, figsize=(16, 8))
-        panels = [
-            (axes[0], initial_cell_features, "Initial placement"),
-            (axes[1], final_cell_features,   "Final placement"),
-        ]
-        legend_anchor = (0.5, 0.01)
+    fig, axes = plt.subplots(2, 2, figsize=(20, 16))
+    panels = [
+        (axes[0, 0], initial_cell_features,  "Initial (origin)"),
+        (axes[0, 1], phase1_cell_features,   "After phase 1 — wirelength centroid"),
+        (axes[1, 0], phase2_cell_features,   "After phase 2 — first zero-overlap"),
+        (axes[1, 1], final_cell_features,    "Final — phase 3 wirelength tuning"),
+    ]
+    legend_anchor = (0.5, 0.01)
 
     fig.patch.set_facecolor("#f8f9fa")
 
@@ -157,6 +156,7 @@ def plot_placement(
         overlapping = calculate_cells_with_overlaps(cf)
         n_macros    = _num_macros(cf)
         N           = cf.shape[0]
+        metrics     = calculate_normalized_metrics(cf, pin_features, edge_list)
 
         if show_wires:
             _draw_wires(ax, cf, pin_features, edge_list)
@@ -167,7 +167,7 @@ def plot_placement(
         ax.set_title(
             f"{title}\n"
             f"{N} cells ({n_macros} macros, {N - n_macros} std)  |  "
-            f"{len(overlapping)} overlapping",
+            f"overlap={metrics['overlap_ratio']:.4f}  wl={metrics['normalized_wl']:.4f}",
             fontsize=11, pad=8,
         )
         ax.set_xlabel("x (units)")
@@ -246,22 +246,16 @@ def main():
         num_macros, num_std_cells
     )
 
-    total_cells  = cell_features.shape[0]
-    total_area   = cell_features[:, 0].sum().item()
-    spread_radius = (total_area ** 0.5) * 0.6
-    angles = torch.rand(total_cells) * 2 * 3.14159
-    radii  = torch.rand(total_cells) * spread_radius
-    cell_features[:, 2] = radii * torch.cos(angles)
-    cell_features[:, 3] = radii * torch.sin(angles)
-
     print("Running optimizer ...")
-    result = train_placement(cell_features, pin_features, edge_list, verbose=False)
+    result = train_placement(cell_features, pin_features, edge_list, verbose=True)
 
     plot_placement(
         result["initial_cell_features"],
         result["final_cell_features"],
         pin_features,
         edge_list,
+        phase1_cell_features=result["phase1_cell_features"],
+        phase2_cell_features=result["phase2_cell_features"],
         show_wires=False,
         filename="placement_result.png",
     )

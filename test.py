@@ -58,47 +58,30 @@ def run_placement_test(
     num_macros,
     num_std_cells,
     seed=None,
-    init_mode="random",
+    verbose=False,
 ):
     """Run placement optimization on a single test case.
 
-    Uses default hyperparameters from train_placement() function.
+    All cells start at the origin (0, 0). Phase 1 drives them to their
+    connectivity centroid; phase 2 eliminates overlaps; phase 3 fine-tunes
+    wirelength while guarding against re-overlap.
 
     Args:
         test_id: Test case identifier
         num_macros: Number of macro cells
         num_std_cells: Number of standard cells
         seed: Random seed for reproducibility
-        init_mode: "random" for spread init, "warmup" for origin + phase-1 wirelength warmup
 
     Returns:
         Dictionary with test results and metrics
     """
     if seed:
-        # Set seed for reproducibility
         torch.manual_seed(seed)
 
-    # Generate netlist
+    # Generate netlist (cells initialised at origin by default)
     cell_features, pin_features, edge_list = generate_placement_input(
         num_macros, num_std_cells
     )
-
-    total_cells = cell_features.shape[0]
-
-    if init_mode == "warmup":
-        # All cells start at origin; phase 1 will spread them via wirelength alone
-        cell_features[:, 2] = 0.0
-        cell_features[:, 3] = 0.0
-        phase1_epochs = 500
-    else:
-        # Random spread proportional to sqrt(total area)
-        total_area = cell_features[:, 0].sum().item()
-        spread_radius = (total_area ** 0.5) * 0.6
-        angles = torch.rand(total_cells) * 2 * 3.14159
-        radii = torch.rand(total_cells) * spread_radius
-        cell_features[:, 2] = radii * torch.cos(angles)
-        cell_features[:, 3] = radii * torch.sin(angles)
-        phase1_epochs = 0
 
     # Run optimization with default hyperparameters
     start_time = time.time()
@@ -106,8 +89,7 @@ def run_placement_test(
         cell_features,
         pin_features,
         edge_list,
-        phase1_epochs=phase1_epochs,
-        verbose=False,  # Suppress per-epoch output
+        verbose=verbose,
     )
     elapsed_time = time.time() - start_time
 
@@ -130,6 +112,7 @@ def run_placement_test(
         # Raw data for optional visualization
         "_initial_cell_features": result["initial_cell_features"],
         "_phase1_cell_features": result["phase1_cell_features"],
+        "_phase2_cell_features": result["phase2_cell_features"],
         "_final_cell_features": result["final_cell_features"],
         "_pin_features": pin_features,
         "_edge_list": edge_list,
@@ -137,15 +120,12 @@ def run_placement_test(
     }
 
 
-def run_all_tests(visualize=False, output_dir="output", init_mode="random"):
+def run_all_tests(visualize=False, output_dir="output", verbose=False):
     """Run all test cases and compute aggregate metrics.
-
-    Uses default hyperparameters from train_placement() function.
 
     Args:
         visualize: If True, save placement and loss plots for each test case.
         output_dir: Directory to write visualization images into.
-        init_mode: "random" for spread init, "warmup" for origin + wirelength warmup.
 
     Returns:
         Dictionary with all test results and aggregate statistics
@@ -179,7 +159,7 @@ def run_all_tests(visualize=False, output_dir="output", init_mode="random"):
             num_macros,
             num_std_cells,
             seed,
-            init_mode=init_mode,
+            verbose=verbose,
         )
 
         all_results.append(result)
@@ -199,6 +179,7 @@ def run_all_tests(visualize=False, output_dir="output", init_mode="random"):
                 result["_pin_features"],
                 result["_edge_list"],
                 phase1_cell_features=result["_phase1_cell_features"],
+                phase2_cell_features=result["_phase2_cell_features"],
                 filename=f"{prefix}_placement.png",
             )
             plot_loss_history(
@@ -241,13 +222,12 @@ def main():
         help="Directory to write visualization images into (default: output/)",
     )
     parser.add_argument(
-        "--init-mode", default="random", choices=["random", "warmup"],
-        help="Initialization strategy: 'random' (default) spreads cells randomly, "
-             "'warmup' starts all cells at origin and runs a wirelength-only phase first",
+        "--verbose", action="store_true",
+        help="Print per-epoch training progress for each test case",
     )
     args = parser.parse_args()
 
-    run_all_tests(visualize=args.visualize, output_dir=args.output_dir, init_mode=args.init_mode)
+    run_all_tests(visualize=args.visualize, output_dir=args.output_dir, verbose=args.verbose)
 
 
 if __name__ == "__main__":

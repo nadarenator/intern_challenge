@@ -387,114 +387,154 @@ def train_placement(
     cell_features,
     pin_features,
     edge_list,
-    num_epochs=5000,
-    lr=1.0,
-    lambda_wirelength=1.0,
-    lambda_overlap=1000.0,
-    phase1_epochs=0,
+    phase_max_epochs=10000,
+    lr_phase1=0.1,
+    lr_phase2=0.1,
+    lr_phase3=1e-4,
+    phase1_tol=1e-4,
     verbose=True,
-    log_interval=100,
 ):
-    """Train the placement optimization using gradient descent.
+    """Train placement in three phases.
+
+    Phase 1 — wirelength only, run until loss < phase1_tol (cells converge to
+              weighted centroid positions driven by connectivity).
+    Phase 2 — overlap only, run until overlap loss == 0 (all cells separated).
+    Phase 3 — wirelength finetuning; stops and restores the previous state the
+              moment any overlap reappears.
+
+    All cells are expected to start at the origin (0, 0).
 
     Args:
         cell_features: [N, 6] tensor with cell properties
         pin_features: [P, 7] tensor with pin properties
         edge_list: [E, 2] tensor with edge connectivity
-        num_epochs: Number of optimization iterations
-        lr: Learning rate for Adam optimizer
-        lambda_wirelength: Weight for wirelength loss
-        lambda_overlap: Weight for overlap loss
-        phase1_epochs: Epochs to run wirelength-only warmup (0 = disabled)
-        verbose: Whether to print progress
-        log_interval: How often to print progress
+        phase_max_epochs: Max iterations per phase
+        lr_phase1: Adam learning rate for phase 1
+        lr_phase2: Adam learning rate for phase 2
+        lr_phase3: Adam learning rate for phase 3
+        phase1_tol: Wirelength loss threshold to end phase 1 early
+        verbose: Whether to print phase-level progress
 
     Returns:
         Dictionary with:
             - final_cell_features: Optimized cell positions
-            - initial_cell_features: Original cell positions (for comparison)
-            - phase1_cell_features: Positions at end of phase 1, or None if phase1_epochs=0
-            - loss_history: Loss values over time
+            - initial_cell_features: Original cell positions
+            - phase1_cell_features: Positions after phase 1 (centroid layout)
+            - phase2_cell_features: Positions after phase 2 (first zero-overlap)
+            - loss_history: Loss values recorded across all phases
     """
-    # Clone features and create learnable positions
     cell_features = cell_features.clone()
     initial_cell_features = cell_features.clone()
 
-    # Make only cell positions require gradients
     cell_positions = cell_features[:, 2:4].clone().detach()
     cell_positions.requires_grad_(True)
 
-    # Create optimizer
-    optimizer = optim.Adam([cell_positions], lr=lr)
-
-    # Track loss history
     loss_history = {
         "total_loss": [],
         "wirelength_loss": [],
         "overlap_loss": [],
     }
 
-    phase1_cell_features = None
+    def _snapshot():
+        cf = cell_features.clone()
+        cf[:, 2:4] = cell_positions.detach()
+        return cf
 
-    # Training loop
-    for epoch in range(num_epochs):
-        # Reset optimizer state at phase transition to drop phase-1 momentum
-        if epoch == phase1_epochs and phase1_epochs > 0:
-            optimizer.state.clear()
-
+    # ── Phase 1: wirelength only → converge to weighted centroid ──────────────
+    if verbose:
+        print(f"Phase 1: minimising wirelength to centroid (tol={phase1_tol:.0e}, max={phase_max_epochs}) ...")
+    optimizer = optim.Adam([cell_positions], lr=lr_phase1)
+    for epoch in range(phase_max_epochs):
         optimizer.zero_grad()
-
-        # Create cell_features with current positions
-        cell_features_current = cell_features.clone()
-        cell_features_current[:, 2:4] = cell_positions
-
-        # Calculate losses
-        wl_loss = wirelength_attraction_loss(
-            cell_features_current, pin_features, edge_list
-        )
-        overlap_loss = overlap_repulsion_loss(
-            cell_features_current, pin_features, edge_list
-        )
-
-        # Phase 1: wirelength only; Phase 2: both losses
-        effective_lambda_overlap = 0.0 if epoch < phase1_epochs else lambda_overlap
-        total_loss = lambda_wirelength * wl_loss + effective_lambda_overlap * overlap_loss
-
-        # Backward pass
-        total_loss.backward()
-
-        # Gradient clipping to prevent extreme updates
+        cf_cur = cell_features.clone()
+        cf_cur[:, 2:4] = cell_positions
+        wl_loss = wirelength_attraction_loss(cf_cur, pin_features, edge_list)
+        wl_loss.backward()
         torch.nn.utils.clip_grad_norm_([cell_positions], max_norm=5.0)
-
-        # Update positions
         optimizer.step()
 
-        # Snapshot positions at the end of phase 1
-        if phase1_epochs > 0 and epoch == phase1_epochs - 1:
-            phase1_cell_features = cell_features.clone()
-            phase1_cell_features[:, 2:4] = cell_positions.detach()
-
-        # Record losses
-        loss_history["total_loss"].append(total_loss.item())
+        loss_history["total_loss"].append(wl_loss.item())
         loss_history["wirelength_loss"].append(wl_loss.item())
-        loss_history["overlap_loss"].append(overlap_loss.item())
+        loss_history["overlap_loss"].append(0.0)
 
-        # Log progress
-        if verbose and (epoch % log_interval == 0 or epoch == num_epochs - 1):
-            phase_label = "phase1" if epoch < phase1_epochs else "phase2"
-            print(f"Epoch {epoch}/{num_epochs} [{phase_label}]:")
-            print(f"  Total Loss: {total_loss.item():.6f}")
-            print(f"  Wirelength Loss: {wl_loss.item():.6f}")
-            print(f"  Overlap Loss: {overlap_loss.item():.6f}")
+        if wl_loss.item() < phase1_tol:
+            if verbose:
+                print(f"  => Phase 1 early stop at epoch {epoch}: WL={wl_loss.item():.2e} < tol")
+            break
+    else:
+        if verbose:
+            print(f"  => Phase 1 reached max epochs ({phase_max_epochs}): WL={wl_loss.item():.2e}")
 
-    # Create final cell features
-    final_cell_features = cell_features.clone()
-    final_cell_features[:, 2:4] = cell_positions.detach()
+    phase1_cell_features = _snapshot()
+
+    # ── Phase 2: overlap only → drive all overlaps to zero ────────────────────
+    if verbose:
+        print(f"Phase 2: eliminating overlaps (max={phase_max_epochs}) ...")
+    optimizer = optim.Adam([cell_positions], lr=lr_phase2)
+    for epoch in range(phase_max_epochs):
+        optimizer.zero_grad()
+        cf_cur = cell_features.clone()
+        cf_cur[:, 2:4] = cell_positions
+        ov_loss = overlap_repulsion_loss(cf_cur, pin_features, edge_list)
+        ov_loss.backward()
+        torch.nn.utils.clip_grad_norm_([cell_positions], max_norm=5.0)
+        optimizer.step()
+
+        loss_history["total_loss"].append(ov_loss.item())
+        loss_history["wirelength_loss"].append(0.0)
+        loss_history["overlap_loss"].append(ov_loss.item())
+
+        if ov_loss.item() == 0.0:
+            if verbose:
+                print(f"  => Phase 2 early stop at epoch {epoch}: overlap=0")
+            break
+    else:
+        if verbose:
+            print(f"  => Phase 2 reached max epochs ({phase_max_epochs}): Overlap={ov_loss.item():.6f}")
+
+    phase2_cell_features = _snapshot()
+
+    # ── Phase 3: wirelength finetuning with overlap guard ─────────────────────
+    if verbose:
+        print(f"Phase 3: wirelength finetuning (max={phase_max_epochs}) ...")
+    optimizer = optim.Adam([cell_positions], lr=lr_phase3)
+    best_positions = cell_positions.detach().clone()
+    for epoch in range(phase_max_epochs):
+        optimizer.zero_grad()
+        cf_cur = cell_features.clone()
+        cf_cur[:, 2:4] = cell_positions
+        wl_loss = wirelength_attraction_loss(cf_cur, pin_features, edge_list)
+
+        with torch.no_grad():
+            cf_check = cell_features.clone()
+            cf_check[:, 2:4] = cell_positions
+            ov_check = overlap_repulsion_loss(cf_check, pin_features, edge_list)
+
+        if ov_check.item() > 0.0:
+            with torch.no_grad():
+                cell_positions.copy_(best_positions)
+            if verbose:
+                print(f"  => Phase 3 early stop at epoch {epoch}: overlap reappeared, restored last zero-overlap state")
+            break
+
+        best_positions = cell_positions.detach().clone()
+        wl_loss.backward()
+        torch.nn.utils.clip_grad_norm_([cell_positions], max_norm=5.0)
+        optimizer.step()
+
+        loss_history["total_loss"].append(wl_loss.item())
+        loss_history["wirelength_loss"].append(wl_loss.item())
+        loss_history["overlap_loss"].append(0.0)
+
+    else:
+        if verbose:
+            print(f"  => Phase 3 reached max epochs ({phase_max_epochs}): WL={wl_loss.item():.6f}")
 
     return {
-        "final_cell_features": final_cell_features,
+        "final_cell_features": _snapshot(),
         "initial_cell_features": initial_cell_features,
         "phase1_cell_features": phase1_cell_features,
+        "phase2_cell_features": phase2_cell_features,
         "loss_history": loss_history,
     }
 
