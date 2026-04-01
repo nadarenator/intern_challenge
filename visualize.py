@@ -119,23 +119,35 @@ def plot_placement(
     final_cell_features: torch.Tensor,
     pin_features: torch.Tensor,
     edge_list: torch.Tensor,
+    phase1_cell_features: torch.Tensor | None = None,
     show_wires: bool = False,
     filename: str = "placement_result.png",
     show: bool = False,
 ):
-    """Side-by-side initial vs final placement.
+    """Side-by-side initial vs final placement (2 panels), or 3-panel when
+    phase1_cell_features is provided (warmup init mode).
 
     Cells are colour-coded (macros = orange, std cells = teal).
     Cells involved in overlaps are highlighted in red.
     Pass show_wires=True to draw wire connections (can be noisy).
     """
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
-    fig.patch.set_facecolor("#f8f9fa")
+    if phase1_cell_features is not None:
+        fig, axes = plt.subplots(1, 3, figsize=(24, 8))
+        panels = [
+            (axes[0], initial_cell_features,  "Initial (origin)"),
+            (axes[1], phase1_cell_features,   "After phase 1 — wirelength warmup"),
+            (axes[2], final_cell_features,    "Final"),
+        ]
+        legend_anchor = (0.5, 0.01)
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+        panels = [
+            (axes[0], initial_cell_features, "Initial placement"),
+            (axes[1], final_cell_features,   "Final placement"),
+        ]
+        legend_anchor = (0.5, 0.01)
 
-    panels = [
-        (ax1, initial_cell_features, "Initial placement"),
-        (ax2, final_cell_features,   "Final placement"),
-    ]
+    fig.patch.set_facecolor("#f8f9fa")
 
     for ax, cf, title in panels:
         ax.set_facecolor("#ffffff")
@@ -168,7 +180,7 @@ def plot_placement(
         mpatches.Patch(facecolor=OVERLAP_FACE, alpha=OVERLAP_ALPHA, label="Overlapping"),
     ]
     fig.legend(handles=legend_handles, loc="lower center", ncol=3,
-               frameon=True, fontsize=10, bbox_to_anchor=(0.5, 0.01))
+               frameon=True, fontsize=10, bbox_to_anchor=legend_anchor)
 
     plt.tight_layout(rect=[0, 0.05, 1, 1])
 

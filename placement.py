@@ -391,6 +391,7 @@ def train_placement(
     lr=1.0,
     lambda_wirelength=1.0,
     lambda_overlap=1000.0,
+    phase1_epochs=0,
     verbose=True,
     log_interval=100,
 ):
@@ -404,6 +405,7 @@ def train_placement(
         lr: Learning rate for Adam optimizer
         lambda_wirelength: Weight for wirelength loss
         lambda_overlap: Weight for overlap loss
+        phase1_epochs: Epochs to run wirelength-only warmup (0 = disabled)
         verbose: Whether to print progress
         log_interval: How often to print progress
 
@@ -411,6 +413,7 @@ def train_placement(
         Dictionary with:
             - final_cell_features: Optimized cell positions
             - initial_cell_features: Original cell positions (for comparison)
+            - phase1_cell_features: Positions at end of phase 1, or None if phase1_epochs=0
             - loss_history: Loss values over time
     """
     # Clone features and create learnable positions
@@ -431,8 +434,14 @@ def train_placement(
         "overlap_loss": [],
     }
 
+    phase1_cell_features = None
+
     # Training loop
     for epoch in range(num_epochs):
+        # Reset optimizer state at phase transition to drop phase-1 momentum
+        if epoch == phase1_epochs and phase1_epochs > 0:
+            optimizer.state.clear()
+
         optimizer.zero_grad()
 
         # Create cell_features with current positions
@@ -447,8 +456,9 @@ def train_placement(
             cell_features_current, pin_features, edge_list
         )
 
-        # Combined loss
-        total_loss = lambda_wirelength * wl_loss + lambda_overlap * overlap_loss
+        # Phase 1: wirelength only; Phase 2: both losses
+        effective_lambda_overlap = 0.0 if epoch < phase1_epochs else lambda_overlap
+        total_loss = lambda_wirelength * wl_loss + effective_lambda_overlap * overlap_loss
 
         # Backward pass
         total_loss.backward()
@@ -459,6 +469,11 @@ def train_placement(
         # Update positions
         optimizer.step()
 
+        # Snapshot positions at the end of phase 1
+        if phase1_epochs > 0 and epoch == phase1_epochs - 1:
+            phase1_cell_features = cell_features.clone()
+            phase1_cell_features[:, 2:4] = cell_positions.detach()
+
         # Record losses
         loss_history["total_loss"].append(total_loss.item())
         loss_history["wirelength_loss"].append(wl_loss.item())
@@ -466,7 +481,8 @@ def train_placement(
 
         # Log progress
         if verbose and (epoch % log_interval == 0 or epoch == num_epochs - 1):
-            print(f"Epoch {epoch}/{num_epochs}:")
+            phase_label = "phase1" if epoch < phase1_epochs else "phase2"
+            print(f"Epoch {epoch}/{num_epochs} [{phase_label}]:")
             print(f"  Total Loss: {total_loss.item():.6f}")
             print(f"  Wirelength Loss: {wl_loss.item():.6f}")
             print(f"  Overlap Loss: {overlap_loss.item():.6f}")
@@ -478,6 +494,7 @@ def train_placement(
     return {
         "final_cell_features": final_cell_features,
         "initial_cell_features": initial_cell_features,
+        "phase1_cell_features": phase1_cell_features,
         "loss_history": loss_history,
     }
 
