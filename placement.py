@@ -356,18 +356,41 @@ def overlap_repulsion_loss(cell_features, pin_features, edge_list):
     #
     # Delete this placeholder and add your implementation:
 
-    # Placeholder - returns a constant loss (REPLACE THIS!)
-    return torch.tensor(1.0, requires_grad=True)
+    # Extract positions, widths, heights
+    positions = cell_features[:, 2:4]  # [N, 2]
+    widths = cell_features[:, 4]       # [N]
+    heights = cell_features[:, 5]      # [N]
+
+    # Pairwise center-to-center distances via broadcasting
+    pos_i = positions.unsqueeze(1)   # [N, 1, 2]
+    pos_j = positions.unsqueeze(0)   # [1, N, 2]
+    dist = torch.abs(pos_i - pos_j)  # [N, N, 2]
+
+    # Minimum separation required for non-overlap
+    min_sep_x = (widths.unsqueeze(1) + widths.unsqueeze(0)) / 2   # [N, N]
+    min_sep_y = (heights.unsqueeze(1) + heights.unsqueeze(0)) / 2  # [N, N]
+
+    # Positive overlap amounts in each axis
+    overlap_x = torch.relu(min_sep_x - dist[:, :, 0])  # [N, N]
+    overlap_y = torch.relu(min_sep_y - dist[:, :, 1])  # [N, N]
+
+    # Overlap area per pair (nonzero only when both axes overlap)
+    overlap_area = overlap_x * overlap_y  # [N, N]
+
+    # Sum upper triangle only (each pair counted once)
+    mask = torch.triu(torch.ones(N, N, dtype=torch.bool), diagonal=1)
+    num_pairs = N * (N - 1) / 2
+    return overlap_area[mask].sum() / num_pairs
 
 
 def train_placement(
     cell_features,
     pin_features,
     edge_list,
-    num_epochs=1000,
-    lr=0.01,
+    num_epochs=5000,
+    lr=1.0,
     lambda_wirelength=1.0,
-    lambda_overlap=10.0,
+    lambda_overlap=1000.0,
     verbose=True,
     log_interval=100,
 ):

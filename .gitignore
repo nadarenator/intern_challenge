@@ -3,5 +3,5 @@
 *.jpeg
 *.gif
 *.bmp
-
+.venv
 **/__pycache__/**
