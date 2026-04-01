@@ -388,8 +388,8 @@ def train_placement(
     pin_features,
     edge_list,
     phase_max_epochs=10000,
-    lr_phase1=0.1,
-    lr_phase2=0.1,
+    lr_phase1=0.01,
+    lr_phase2=0.01,
     lr_phase3=1e-4,
     phase1_tol=1e-4,
     verbose=True,
@@ -476,6 +476,12 @@ def train_placement(
         cf_cur = cell_features.clone()
         cf_cur[:, 2:4] = cell_positions
         ov_loss = overlap_repulsion_loss(cf_cur, pin_features, edge_list)
+
+        if ov_loss.item() == 0.0:
+            if verbose:
+                print(f"  => Phase 2 early stop at epoch {epoch}: overlap=0")
+            break
+
         ov_loss.backward()
         torch.nn.utils.clip_grad_norm_([cell_positions], max_norm=5.0)
         optimizer.step()
@@ -483,11 +489,6 @@ def train_placement(
         loss_history["total_loss"].append(ov_loss.item())
         loss_history["wirelength_loss"].append(0.0)
         loss_history["overlap_loss"].append(ov_loss.item())
-
-        if ov_loss.item() == 0.0:
-            if verbose:
-                print(f"  => Phase 2 early stop at epoch {epoch}: overlap=0")
-            break
     else:
         if verbose:
             print(f"  => Phase 2 reached max epochs ({phase_max_epochs}): Overlap={ov_loss.item():.6f}")
