@@ -18,6 +18,8 @@ vb_playground.py. The challenge is to implement the overlap loss function,
 not to tune hyperparameters.
 """
 
+import argparse
+import os
 import time
 
 import torch
@@ -116,17 +118,31 @@ def run_placement_test(
         "num_cells_with_overlaps": metrics["num_cells_with_overlaps"],
         "overlap_ratio": metrics["overlap_ratio"],
         "normalized_wl": metrics["normalized_wl"],
+        # Raw data for optional visualization
+        "_initial_cell_features": result["initial_cell_features"],
+        "_final_cell_features": result["final_cell_features"],
+        "_pin_features": pin_features,
+        "_edge_list": edge_list,
+        "_loss_history": result["loss_history"],
     }
 
 
-def run_all_tests():
+def run_all_tests(visualize=False, output_dir="output"):
     """Run all test cases and compute aggregate metrics.
 
     Uses default hyperparameters from train_placement() function.
 
+    Args:
+        visualize: If True, save placement and loss plots for each test case.
+        output_dir: Directory to write visualization images into.
+
     Returns:
         Dictionary with all test results and aggregate statistics
     """
+    if visualize:
+        from visualize import plot_placement, plot_loss_history
+        os.makedirs(output_dir, exist_ok=True)
+
     print("=" * 70)
     print("PLACEMENT CHALLENGE TEST SUITE")
     print("=" * 70)
@@ -162,6 +178,21 @@ def run_all_tests():
         print(f"  Normalized WL: {result['normalized_wl']:.4f}")
         print(f"  Time: {result['elapsed_time']:.2f}s")
         print(f"  Status: {status}")
+
+        if visualize:
+            prefix = os.path.join(output_dir, f"test_{test_id:02d}")
+            plot_placement(
+                result["_initial_cell_features"],
+                result["_final_cell_features"],
+                result["_pin_features"],
+                result["_edge_list"],
+                filename=f"{prefix}_placement.png",
+            )
+            plot_loss_history(
+                result["_loss_history"],
+                filename=f"{prefix}_loss.png",
+            )
+
         print()
 
     # Compute aggregate statistics
@@ -187,8 +218,18 @@ def run_all_tests():
 
 def main():
     """Main entry point for the test suite."""
-    # Run all tests with default hyperparameters
-    run_all_tests()
+    parser = argparse.ArgumentParser(description="VLSI placement challenge test suite")
+    parser.add_argument(
+        "--visualize", action="store_true",
+        help="Generate placement and loss plots for each test case",
+    )
+    parser.add_argument(
+        "--output-dir", default="output",
+        help="Directory to write visualization images into (default: output/)",
+    )
+    args = parser.parse_args()
+
+    run_all_tests(visualize=args.visualize, output_dir=args.output_dir)
 
 
 if __name__ == "__main__":
