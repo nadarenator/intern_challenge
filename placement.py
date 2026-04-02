@@ -412,9 +412,9 @@ def overlap_repulsion_loss(cell_features, pin_features, edge_list):
     overlap_area = overlap_x * overlap_y  # [N, N]
 
     # Sum upper triangle only (each pair counted once)
-    mask = torch.triu(torch.ones(N, N, dtype=torch.bool), diagonal=1)
+    # torch.triu is a fused kernel — no bool mask allocation or fancy-index copy
     num_pairs = N * (N - 1) / 2
-    return overlap_area[mask].sum() / num_pairs
+    return torch.triu(overlap_area, diagonal=1).sum() / num_pairs
 
 
 def train_placement(
@@ -457,8 +457,14 @@ def train_placement(
             - phase2_cell_features: Positions after phase 2 (first zero-overlap)
             - loss_history: Loss values recorded across all phases
     """
-    cell_features = cell_features.clone()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cuda" and verbose:
+        print(f"[GPU] Using {torch.cuda.get_device_name(0)}")
+
+    cell_features = cell_features.clone().to(device)
     initial_cell_features = cell_features.clone()
+    pin_features = pin_features.to(device)
+    edge_list = edge_list.to(device)
 
     cell_positions = cell_features[:, 2:4].clone().detach()
     cell_positions.requires_grad_(True)
@@ -472,7 +478,7 @@ def train_placement(
     def _snapshot():
         cf = cell_features.clone()
         cf[:, 2:4] = cell_positions.detach()
-        return cf
+        return cf.cpu()  # downstream code calls .numpy() so must be on CPU
 
     # ── Phase 1: wirelength only → converge to weighted centroid ──────────────
     if verbose:
@@ -567,7 +573,7 @@ def train_placement(
 
     return {
         "final_cell_features": _snapshot(),
-        "initial_cell_features": initial_cell_features,
+        "initial_cell_features": initial_cell_features.cpu(),
         "phase1_cell_features": phase1_cell_features,
         "phase2_cell_features": phase2_cell_features,
         "loss_history": loss_history,
@@ -662,34 +668,27 @@ def calculate_cells_with_overlaps(cell_features):
     if N <= 1:
         return set()
 
-    # Extract cell properties
-    positions = cell_features[:, 2:4].detach().numpy()
-    widths = cell_features[:, 4].detach().numpy()
-    heights = cell_features[:, 5].detach().numpy()
+    with torch.no_grad():
+        # cell_features is a CPU tensor (from _snapshot); keep all ops on CPU
+        positions = cell_features[:, 2:4]   # [N, 2]
+        widths    = cell_features[:, 4]     # [N]
+        heights   = cell_features[:, 5]     # [N]
 
-    cells_with_overlaps = set()
+        # Pairwise absolute distances via broadcasting — O(N²) vectorized
+        dist = torch.abs(positions.unsqueeze(1) - positions.unsqueeze(0))  # [N, N, 2]
 
-    # Check all pairs
-    for i in range(N):
-        for j in range(i + 1, N):
-            # Calculate center-to-center distances
-            dx = abs(positions[i, 0] - positions[j, 0])
-            dy = abs(positions[i, 1] - positions[j, 1])
+        min_sep_x = (widths.unsqueeze(1) + widths.unsqueeze(0)) / 2   # [N, N]
+        min_sep_y = (heights.unsqueeze(1) + heights.unsqueeze(0)) / 2  # [N, N]
 
-            # Minimum separation for non-overlap
-            min_sep_x = (widths[i] + widths[j]) / 2
-            min_sep_y = (heights[i] + heights[j]) / 2
+        # True where both axes overlap (strict upper triangle = each pair once)
+        overlap_mask = (dist[:, :, 0] < min_sep_x) & (dist[:, :, 1] < min_sep_y)
+        upper = torch.triu(overlap_mask, diagonal=1)  # [N, N] bool
 
-            # Calculate overlap amounts
-            overlap_x = max(0, min_sep_x - dx)
-            overlap_y = max(0, min_sep_y - dy)
+        # A cell is involved if it appears in any overlapping pair
+        has_overlap = upper.any(dim=1) | upper.any(dim=0)  # [N]
+        indices = has_overlap.nonzero(as_tuple=False).squeeze(1).tolist()
 
-            # Overlap occurs only if both x and y overlap
-            if overlap_x > 0 and overlap_y > 0:
-                cells_with_overlaps.add(i)
-                cells_with_overlaps.add(j)
-
-    return cells_with_overlaps
+    return set(indices)
 
 
 def calculate_normalized_metrics(cell_features, pin_features, edge_list):
