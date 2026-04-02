@@ -155,7 +155,6 @@ def run_all_tests(visualize=False, output_dir="output", verbose=False, extra_cre
         )
 
         print(f"Test {idx}/{len(TEST_CASES)}: {size_category} ({num_macros} macros, {num_std_cells} std cells)")
-        print(f"  Seed: {seed}")
 
         # Run test
         result = run_placement_test(

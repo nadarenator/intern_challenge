@@ -421,11 +421,12 @@ def train_placement(
     cell_features,
     pin_features,
     edge_list,
-    phase_max_epochs=10000,
+    phase_max_epochs=100000,
     lr_phase1=0.01,
     lr_phase2=0.01,
     lr_phase3=1e-4,
-    phase1_tol=1e-4,
+    phase1_patience=50,
+    phase1_min_delta=1e-6,
     verbose=True,
 ):
     """Train placement in three phases.
@@ -446,7 +447,9 @@ def train_placement(
         lr_phase1: Adam learning rate for phase 1
         lr_phase2: Adam learning rate for phase 2
         lr_phase3: Adam learning rate for phase 3
-        phase1_tol: Wirelength loss threshold to end phase 1 early
+        phase1_patience: Stop phase 1 if loss hasn't improved by more than
+                         phase1_min_delta for this many consecutive epochs
+        phase1_min_delta: Minimum absolute loss improvement to reset patience
         verbose: Whether to print phase-level progress
 
     Returns:
@@ -482,8 +485,10 @@ def train_placement(
 
     # ── Phase 1: wirelength only → converge to weighted centroid ──────────────
     if verbose:
-        print(f"Phase 1: minimising wirelength to centroid (tol={phase1_tol:.0e}, max={phase_max_epochs}) ...")
+        print(f"Phase 1: minimising wirelength to centroid (patience={phase1_patience}, max={phase_max_epochs}) ...")
     optimizer = optim.Adam([cell_positions], lr=lr_phase1)
+    best_phase1_loss = float("inf")
+    patience_counter = 0
     for epoch in range(phase_max_epochs):
         optimizer.zero_grad()
         cf_cur = cell_features.clone()
@@ -493,17 +498,23 @@ def train_placement(
         torch.nn.utils.clip_grad_norm_([cell_positions], max_norm=5.0)
         optimizer.step()
 
-        loss_history["total_loss"].append(wl_loss.item())
-        loss_history["wirelength_loss"].append(wl_loss.item())
+        loss_val = wl_loss.item()
+        loss_history["total_loss"].append(loss_val)
+        loss_history["wirelength_loss"].append(loss_val)
         loss_history["overlap_loss"].append(0.0)
 
-        if wl_loss.item() < phase1_tol:
-            if verbose:
-                print(f"  => Phase 1 early stop at epoch {epoch}: sq_euc={wl_loss.item():.2e} < tol")
-            break
+        if loss_val < best_phase1_loss - phase1_min_delta:
+            best_phase1_loss = loss_val
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= phase1_patience:
+                if verbose:
+                    print(f"  => Phase 1 early stop at epoch {epoch}: no improvement for {phase1_patience} epochs (sq_euc={loss_val:.2e})")
+                break
     else:
         if verbose:
-            print(f"  => Phase 1 reached max epochs ({phase_max_epochs}): sq_euc={wl_loss.item():.2e}")
+            print(f"  => Phase 1 reached max epochs ({phase_max_epochs}): sq_euc={loss_val:.2e}")
 
     phase1_cell_features = _snapshot()
 
