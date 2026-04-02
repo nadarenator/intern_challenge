@@ -21,7 +21,6 @@ from placement import (
     train_placement,
     calculate_cells_with_overlaps,
     calculate_normalized_metrics,
-    squared_euclidean_loss,
     CellFeatureIdx,
 )
 
@@ -158,7 +157,8 @@ def plot_placement(
         n_macros    = _num_macros(cf)
         N           = cf.shape[0]
         metrics     = calculate_normalized_metrics(cf, pin_features, edge_list)
-        sq_euc      = squared_euclidean_loss(cf, pin_features, edge_list).item()
+        total_area  = cf[:, 0].sum().item()
+        wl_train    = metrics['normalized_wl'] * (total_area ** 0.5)
 
         if show_wires:
             _draw_wires(ax, cf, pin_features, edge_list)
@@ -169,7 +169,7 @@ def plot_placement(
         ax.set_title(
             f"{title}\n"
             f"{N} cells ({n_macros} macros, {N - n_macros} std)  |  "
-            f"overlap={metrics['overlap_ratio']:.4f}  sq_euc={sq_euc:.4f}  wl={metrics['normalized_wl']:.4f}",
+            f"overlap={metrics['overlap_ratio']:.4f}  wl_train={wl_train:.4f}  wl={metrics['normalized_wl']:.4f}",
             fontsize=11, pad=8,
         )
         ax.set_xlabel("x (units)")

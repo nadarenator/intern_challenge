@@ -299,39 +299,6 @@ def wirelength_attraction_loss(cell_features, pin_features, edge_list):
     return total_wirelength / edge_list.shape[0]  # Normalize by number of edges
 
 
-def squared_euclidean_loss(cell_features, pin_features, edge_list):
-    """Mean squared Euclidean distance between connected pins.
-
-    Used as the wirelength training loss in phases 1 and 3. Squared L2 gives a
-    linear spring force (gradient = 2*(dx, dy)), is smooth everywhere, and its
-    minimum is exactly the connectivity-weighted centroid — making it a better
-    phase-1 objective than the Chebyshev approximation in wirelength_attraction_loss.
-
-    Args:
-        cell_features: [N, 6] tensor with [area, num_pins, x, y, width, height]
-        pin_features: [P, 7] tensor with pin information
-        edge_list: [E, 2] tensor with edges
-
-    Returns:
-        Scalar mean squared Euclidean distance across all edges
-    """
-    if edge_list.shape[0] == 0:
-        return torch.tensor(0.0, requires_grad=True)
-
-    cell_positions = cell_features[:, 2:4]
-    cell_indices = pin_features[:, 0].long()
-
-    pin_abs_x = cell_positions[cell_indices, 0] + pin_features[:, 1]
-    pin_abs_y = cell_positions[cell_indices, 1] + pin_features[:, 2]
-
-    src_pins = edge_list[:, 0].long()
-    tgt_pins = edge_list[:, 1].long()
-
-    dx = pin_abs_x[src_pins] - pin_abs_x[tgt_pins]
-    dy = pin_abs_y[src_pins] - pin_abs_y[tgt_pins]
-
-    return (dx ** 2 + dy ** 2).mean()
-
 
 def overlap_repulsion_loss(cell_features, pin_features, edge_list):
     """Calculate loss to prevent cell overlaps.
@@ -493,12 +460,12 @@ def train_placement(
         optimizer.zero_grad()
         cf_cur = cell_features.clone()
         cf_cur[:, 2:4] = cell_positions
-        wl_loss = squared_euclidean_loss(cf_cur, pin_features, edge_list)
-        wl_loss.backward()
+        wl_loss_val = wirelength_attraction_loss(cf_cur, pin_features, edge_list)
+        wl_loss_val.backward()
         torch.nn.utils.clip_grad_norm_([cell_positions], max_norm=5.0)
         optimizer.step()
 
-        loss_val = wl_loss.item()
+        loss_val = wl_loss_val.item()
         loss_history["total_loss"].append(loss_val)
         loss_history["wirelength_loss"].append(loss_val)
         loss_history["overlap_loss"].append(0.0)
@@ -510,11 +477,11 @@ def train_placement(
             patience_counter += 1
             if patience_counter >= phase1_patience:
                 if verbose:
-                    print(f"  => Phase 1 early stop at epoch {epoch}: no improvement for {phase1_patience} epochs (sq_euc={loss_val:.2e})")
+                    print(f"  => Phase 1 early stop at epoch {epoch}: no improvement for {phase1_patience} epochs (wl={loss_val:.2e})")
                 break
     else:
         if verbose:
-            print(f"  => Phase 1 reached max epochs ({phase_max_epochs}): sq_euc={loss_val:.2e}")
+            print(f"  => Phase 1 reached max epochs ({phase_max_epochs}): wl={loss_val:.2e}")
 
     phase1_cell_features = _snapshot()
 
@@ -555,7 +522,7 @@ def train_placement(
         optimizer.zero_grad()
         cf_cur = cell_features.clone()
         cf_cur[:, 2:4] = cell_positions
-        wl_loss = squared_euclidean_loss(cf_cur, pin_features, edge_list)
+        wl_loss_val = wirelength_attraction_loss(cf_cur, pin_features, edge_list)
 
         with torch.no_grad():
             cf_check = cell_features.clone()
@@ -570,17 +537,17 @@ def train_placement(
             break
 
         best_positions = cell_positions.detach().clone()
-        wl_loss.backward()
+        wl_loss_val.backward()
         torch.nn.utils.clip_grad_norm_([cell_positions], max_norm=5.0)
         optimizer.step()
 
-        loss_history["total_loss"].append(wl_loss.item())
-        loss_history["wirelength_loss"].append(wl_loss.item())
+        loss_history["total_loss"].append(wl_loss_val.item())
+        loss_history["wirelength_loss"].append(wl_loss_val.item())
         loss_history["overlap_loss"].append(0.0)
 
     else:
         if verbose:
-            print(f"  => Phase 3 reached max epochs ({phase_max_epochs}): sq_euc={wl_loss.item():.6f}")
+            print(f"  => Phase 3 reached max epochs ({phase_max_epochs}): wl={wl_loss_val.item():.6f}")
 
     return {
         "final_cell_features": _snapshot(),
