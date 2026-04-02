@@ -120,12 +120,13 @@ def run_placement_test(
     }
 
 
-def run_all_tests(visualize=False, output_dir="output", verbose=False):
+def run_all_tests(visualize=False, output_dir="output", verbose=False, extra_credit=False):
     """Run all test cases and compute aggregate metrics.
 
     Args:
         visualize: If True, save placement and loss plots for each test case.
         output_dir: Directory to write visualization images into.
+        extra_credit: If True, also run tests 11 and 12.
 
     Returns:
         Dictionary with all test results and aggregate statistics
@@ -134,16 +135,19 @@ def run_all_tests(visualize=False, output_dir="output", verbose=False):
         from visualize import plot_placement, plot_loss_history
         os.makedirs(output_dir, exist_ok=True)
 
+    # Tests 1–10 are scored; 11–12 are extra credit
+    cases = TEST_CASES if extra_credit else TEST_CASES[:10]
+
     print("=" * 70)
     print("PLACEMENT CHALLENGE TEST SUITE")
     print("=" * 70)
-    print(f"\nRunning {len(TEST_CASES)} test cases with various netlist sizes...")
+    print(f"\nRunning {len(cases)} test cases with various netlist sizes...")
     print("Using default hyperparameters from train_placement()")
     print()
 
     all_results = []
 
-    for idx, (test_id, num_macros, num_std_cells, seed) in enumerate(TEST_CASES, 1):
+    for idx, (test_id, num_macros, num_std_cells, seed) in enumerate(cases, 1):
         size_category = (
             "Small" if num_std_cells <= 30
             else "Medium" if num_std_cells <= 100
@@ -189,18 +193,39 @@ def run_all_tests(visualize=False, output_dir="output", verbose=False):
 
         print()
 
-    # Compute aggregate statistics
-    avg_overlap_ratio = sum(r["overlap_ratio"] for r in all_results) / len(all_results)
-    avg_normalized_wl = sum(r["normalized_wl"] for r in all_results) / len(all_results)
+    # Compute aggregate statistics over tests 1–10 only
+    scored = [r for r in all_results if r["test_id"] <= 10]
+    avg_overlap_ratio = sum(r["overlap_ratio"] for r in scored) / len(scored)
+    avg_normalized_wl = sum(r["normalized_wl"] for r in scored) / len(scored)
     total_time = sum(r["elapsed_time"] for r in all_results)
 
     # Print aggregate results
     print("=" * 70)
-    print("FINAL RESULTS")
+    print("FINAL RESULTS  (tests 1–10)")
     print("=" * 70)
-    print(f"Average Overlap: {avg_overlap_ratio:.4f}")
-    print(f"Average Wirelength: {avg_normalized_wl:.4f}")
-    print(f"Total Runtime: {total_time:.2f}s")
+    print(f"Average Overlap:     {avg_overlap_ratio:.4f}")
+    print(f"Average Wirelength:  {avg_normalized_wl:.4f}")
+    print(f"Total Runtime:       {total_time:.2f}s")
+    print()
+
+    # Per-test breakdown table
+    print("Per-test breakdown:")
+    print(f"  {'Test':>4}  {'Cells':>6}  {'Overlap':>9}  {'Norm WL':>9}  {'Time(s)':>8}  Status")
+    print(f"  {'-'*4}  {'-'*6}  {'-'*9}  {'-'*9}  {'-'*8}  ------")
+    for r in all_results:
+        status = "PASS" if r["num_cells_with_overlaps"] == 0 else "FAIL"
+        ec = " *" if r["test_id"] > 10 else ""
+        print(f"  {r['test_id']:>4}  {r['total_cells']:>6}  {r['overlap_ratio']:>9.4f}  "
+              f"{r['normalized_wl']:>9.4f}  {r['elapsed_time']:>8.2f}  {status}{ec}")
+    print()
+
+    # Leaderboard submission row
+    print("=" * 70)
+    print("LEADERBOARD SUBMISSION")
+    print("=" * 70)
+    print("Copy the row below into README.md (fill in your name and notes):\n")
+    print(f"| ??   | <Your Name>     | {avg_overlap_ratio:.4f}      "
+          f"| {avg_normalized_wl:.4f}          | {total_time:.2f}        |                      |")
     print()
 
     return {
@@ -225,9 +250,18 @@ def main():
         "--verbose", action="store_true",
         help="Print per-epoch training progress for each test case",
     )
+    parser.add_argument(
+        "--extra-credit", action="store_true",
+        help="Also run tests 11 and 12 (10K and 100K cells)",
+    )
     args = parser.parse_args()
 
-    run_all_tests(visualize=args.visualize, output_dir=args.output_dir, verbose=args.verbose)
+    run_all_tests(
+        visualize=args.visualize,
+        output_dir=args.output_dir,
+        verbose=args.verbose,
+        extra_credit=args.extra_credit,
+    )
 
 
 if __name__ == "__main__":
