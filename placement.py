@@ -38,6 +38,7 @@ BONUS CHALLENGES:
 - Add visualization of optimization progress over time
 """
 
+import math
 import os
 from enum import IntEnum
 
@@ -388,12 +389,15 @@ def train_placement(
     cell_features,
     pin_features,
     edge_list,
-    phase_max_epochs=100000,
+    phase_max_epochs=60000,
     lr_phase1=0.01,
     lr_phase2=0.01,
     lr_phase3=1e-4,
     phase1_patience=50,
     phase1_min_delta=1e-6,
+    phase2_lambda1_start=0.99,
+    phase2_lambda2_start=0.01,
+    exp_k=19.0,
     verbose=True,
 ):
     """Train placement in three phases.
@@ -417,6 +421,11 @@ def train_placement(
         phase1_patience: Stop phase 1 if loss hasn't improved by more than
                          phase1_min_delta for this many consecutive epochs
         phase1_min_delta: Minimum absolute loss improvement to reset patience
+        phase2_lambda1_start: Initial weight for wirelength loss in phase 2
+                              (linearly decays to 0 over phase_max_epochs).
+                              Set to 0.0 to use pure overlap loss (original behaviour).
+        phase2_lambda2_start: Initial weight for overlap loss in phase 2
+                              (linearly grows to 1 over phase_max_epochs).
         verbose: Whether to print phase-level progress
 
     Returns:
@@ -485,9 +494,12 @@ def train_placement(
 
     phase1_cell_features = _snapshot()
 
-    # ── Phase 2: overlap only → drive all overlaps to zero ────────────────────
+    # ── Phase 2: combined → pure overlap, drive all overlaps to zero ─────────
+    # λ1 linearly decays from phase2_lambda1_start → 0  (wirelength weight)
+    # λ2 linearly grows  from phase2_lambda2_start → 1  (overlap weight)
     if verbose:
-        print(f"Phase 2: eliminating overlaps (max={phase_max_epochs}) ...")
+        print(f"Phase 2: eliminating overlaps (max={phase_max_epochs}, "
+              f"λ1 {phase2_lambda1_start}→0, λ2 {phase2_lambda2_start}→1) ...")
     optimizer = optim.Adam([cell_positions], lr=lr_phase2)
     for epoch in range(phase_max_epochs):
         optimizer.zero_grad()
@@ -500,12 +512,30 @@ def train_placement(
                 print(f"  => Phase 2 early stop at epoch {epoch}: overlap=0")
             break
 
-        ov_loss.backward()
+        # Exponential schedule: steep early transition, mild later
+        # lam1 (wl) decays fast then flattens; lam2 (overlap) rises fast then flattens.
+        # k=3 means ~63% of transition done by t=0.33, ~95% done by t=1.
+        # We normalize so lam1+lam2=1 and lam1 exactly reaches 0 at t=1.
+        t = epoch / max(phase_max_epochs - 1, 1)   # 0 → 1
+        k = exp_k
+        raw = 1.0 - math.exp(-k * t)           # 0 → ~0.95 (never quite 1)
+        norm = 1.0 - math.exp(-k)              # value at t=1, used to rescale
+        progress = raw / norm                  # rescaled: exactly 0→1
+        lam1 = phase2_lambda1_start * (1.0 - progress)
+        lam2 = phase2_lambda2_start + (1.0 - phase2_lambda2_start) * progress
+
+        if lam1 > 0.0:
+            wl_loss = wirelength_attraction_loss(cf_cur, pin_features, edge_list)
+            combined = lam1 * wl_loss + lam2 * ov_loss
+        else:
+            combined = lam2 * ov_loss
+
+        combined.backward()
         torch.nn.utils.clip_grad_norm_([cell_positions], max_norm=5.0)
         optimizer.step()
 
-        loss_history["total_loss"].append(ov_loss.item())
-        loss_history["wirelength_loss"].append(0.0)
+        loss_history["total_loss"].append(combined.item())
+        loss_history["wirelength_loss"].append(lam1 * wl_loss.item() if lam1 > 0.0 else 0.0)
         loss_history["overlap_loss"].append(ov_loss.item())
     else:
         if verbose:
