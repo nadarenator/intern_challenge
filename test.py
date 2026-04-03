@@ -135,8 +135,8 @@ def run_all_tests(visualize=False, output_dir="output", verbose=False, extra_cre
         from visualize import plot_placement, plot_loss_history
         os.makedirs(output_dir, exist_ok=True)
 
-    # Tests 1–10 are scored; 11–12 are extra credit
-    cases = TEST_CASES if extra_credit else TEST_CASES[:10]
+    # Tests 1–10 are scored; 11–12 are extra credit only
+    cases = TEST_CASES[10:] if extra_credit else TEST_CASES[:10]
 
     print("=" * 70)
     print("PLACEMENT CHALLENGE TEST SUITE")
@@ -154,7 +154,7 @@ def run_all_tests(visualize=False, output_dir="output", verbose=False, extra_cre
             else "Large"
         )
 
-        print(f"Test {idx}/{len(TEST_CASES)}: {size_category} ({num_macros} macros, {num_std_cells} std cells)")
+        print(f"Test {idx}/{len(cases)}: {size_category} ({num_macros} macros, {num_std_cells} std cells)")
 
         # Run test
         result = run_placement_test(
