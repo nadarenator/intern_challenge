@@ -1,63 +1,86 @@
-# Intern Challenge: Placement Problem - Fork this repo when you start!
+# VLSI Placement: Kevin Joseph
 
-Welcome to the par.tcl 2026 ML Sys intern challenge! Your task is to solve a placement problem involving standard cells (small blocks) and macros (large blocks). The **primary goal is to minimize overlap** between blocks. Wirelength is also evaluated, but **overlap is the dominant objective**. A valid placement must eventually ensure no blocks overlap, but we will judge solutions by how effectively you reduce overlap and, secondarily, how well you handle wirelength.
+Solution to the [par.tcl 2026 intern challenge](https://github.com/partcleda/intern_challenge). Achieves **0.0000 overlap** and **0.2480 normalized wirelength** (rank 1) across all 10 test cases.
 
-The deadline is when all intern slots for summer 2026 are filled. We will review submissions on a rolling basis.
+## Results
 
-## Problem Statement
+| Overlap | Wirelength (um) | Runtime (s) |
+|---------|-----------------|-------------|
+| 0.0000  | 0.2480          | 435.52      |
 
-- **Objective:** Place a set of standard cells and macros on a chip layout to **minimize overlap (most important)** and wirelength (secondary).  
-  - Overlap will be measured as `num overlapping cells / num total cells`, though you are encouraged to define and implement your own overlap loss function if you think it’s better.  
-  - Solving this problem will require designing a strong overlap loss, tuning hyperparameters, and experimenting with optimizers. Creativity is encouraged — nothing is off the table.  
-- **Input:** Randomly generated netlists.  
-- **Output:** Average normalized **overlap (primary metric)** and wirelength (secondary metric) across a set of randomized placements.  
+## Problem
 
-## Submission Instructions
+Given a set of rectangular cells (macros and standard cells) with fixed sizes and wire connections between them, find (x, y) positions that:
+1. **Eliminate all overlaps** (primary objective)
+2. **Minimize total wirelength** (secondary objective)
 
-1. **Fork this repository.**
-2. Solve the placement problem using your preferred tools or scripts.  
-3. Run the first 10 tests to evaluate your solution and obtain the overlap and wirelength metrics. Report Average Overlap, Wirelength and total Runtime. *Test cases 11 and 12 are extra credit, give them a shot if you have some time.*  
-5. Submit a pull request with your updated leaderboard entry and instructions for me to access your actual submission (it's fine if it's public).
+## Approach: 3-Phase Gradient Descent
 
-Note: You can use any libraries or frameworks you like, but please ensure that your code is well-documented and easy to follow.  
+### Phase 1: Wirelength-only initialization
 
-Also, if you think there are any bugs in the provided code, feel free to fix them and mention the changes in your submission.  
+Cells start at the origin and are pulled toward the centroid of their connections using a pure wirelength loss (smooth Chebyshev / log-sum-exp approximation of Manhattan distance). This produces a compact, connectivity-aware layout before any overlap penalty is introduced.
 
-You may submit multiple solutions to try and increase your score.
+**Why this matters:** Starting from a good wirelength-minimizing layout means phase 2 only needs to spread cells apart slightly rather than rearrange them entirely. This is what drives the low final wirelength, since the topology is already good before overlap elimination begins.
 
-We will review submissions on a rolling basis.
+Phase 1 uses patience-based early stopping: exits if the loss doesn't improve by more than `1e-6` for 50 consecutive epochs.
 
-## Leaderboard (sorted by overlap)
+### Phase 2: Overlap elimination with exponential λ-annealing
 
-| Rank | Name            | Overlap     | Wirelength (um) | Runtime (s) | Notes                |
-|------|-----------------|-------------|-----------------|-------------|----------------------|
-| 1    | Kevin Joseph    | 0.0000      | 0.2480          | 435.52      | Exponential λ-annealing with min-WL init |
-| 2    | Brayden Rudisill  | 0.0000    | 0.2611          |   50.51     |   Timed on a mac air |
-| 3    | manuhalapeth      | 0.0000    | 0.2630          |  196.8      |                      |
-| 4    | Neil Teje         | 0.0000    | 0.2700          | 24.00s      |                      |
-| 5    | Leison Gao      | 0.0000      | 0.2796          | 50.14s      |                      |
-| 6    | William Pan     | 0.0000      | 0.2848          | 155.33s     |                      |
-| 7    | Ashmit Dutta    | 0.0000      | 0.2870          | 995.58      |  Spent my entire morning (12 am - 6 am) doing this :P       |
-| 8    | Pawan Paleja     | 0.0000      | 0.3311         | 1.74s     |   Implemented hint for loss func, cosine annealing on learning rate with warmup, std annealing on lambda weight. Used optuna to tune hyperparam. Tested on gh codespaces 2-core.                   |
-| 9    | Shashank Shriram  | 0.0000     | 0.3312          |  11.32      |   🏎️💥               |
-| 10   | Gabriel Del Monte  | 0.0000      | 0.3427          | 606.07      |                                                              |
-| 11   | Aleksey  Valouev| 0.0000      | 0.3577          | 118.98      |                      |        
-| 12   | Mohul Shukla    | 0.0000      | 0.5048          | 54.60s      |                      |
-| 13   | Ryan Hulke      | 0.0000      | 0.5226          | 166.24      |                      |
-| 14   | Neel  Shah      | 0.0000      | 0.5445          | 45.40       |  Zero overlaps on all tests, adaptive schedule + early stop |
-| 15   | Nawel Asgar    | 0.0000     | 0.5675          | 81.49      | Adaptive penalty scaling with cubic gradients and design-size optimization
-| 16   | Shiva Baghel     | 0.0000     | 0.5885          | 491.00      | Stable zero-overlap with balanced optimization      |
-| 17   | Vansh Jain      | 0.0000      | 0.9352          | 86.36       |                      |
-| 18   | Akash Pai       | 0.0006      | 0.4933          | 326.25s     |                      |
-| 19   | Zade Mahayni     | 0.00665     | 0.5157          |  127.4     | Will try again tomorrow |
-| 20   | Nithin Yanna    | 0.0148      | 0.5034          | 247.30s     | aggressive overlap penalty with quadratic scaling |
-| 21   | Sean Ko         | 0.0271      |  .5138          | 31.83s      | lr increase, decrease epoch, increase lambda overlap and decreased lambda wire_length + log penalty loss |
-| 22   | Keya Gohil    | 0.0155      | 0.4678         | 1513.07     | Still working |
-| 23   | Prithvi Seran   | 0.0499      | 0.4890          | 398.58      |                      |
-| 24   | partcl example  | 0.8         | 0.4             | 5           | example              |
-| 25   | Add Yours!      |             |                 |             |                      |
+Rather than switching abruptly to a pure overlap loss (which would discard the phase 1 layout), phase 2 uses a combined loss with an exponentially annealed schedule:
 
-> **To add your results:**  
-> Insert a new row in the table above with your name, overlap, wirelength, and any notes. Ensure you sort by overlap.
+```
+t        = epoch / (phase_max_epochs - 1)           # 0 -> 1
+progress = (1 - exp(-k*t)) / (1 - exp(-k))          # rescaled, k=19
+λ1       = 0.99 * (1 - progress)                    # wirelength weight: 0.99 -> 0
+λ2       = 0.01 + 0.99 * progress                   # overlap weight:    0.01 -> 1
+loss     = λ1 * wl_loss + λ2 * overlap_loss
+```
 
-Good luck!
+The exponential shape (k=19) is steep early, so overlap dominates well before the epoch budget runs out. This ensures large designs (test 10: 2010 cells) converge reliably.
+
+The zero-overlap check happens **before** `optimizer.step()`. This prevents Adam's momentum from nudging positions into overlap after the stopping condition is detected.
+
+### Phase 3: Wirelength fine-tuning with overlap guard
+
+Optimizes purely for wirelength at a low learning rate (`1e-4`). A no-grad overlap check runs each epoch; if any overlap reappears, the previous zero-overlap snapshot is restored and training stops. Empirically found to be redundant.
+
+## Loss Functions
+
+**Overlap repulsion loss:** For each pair of cells, computes the 1D overlap in x and y independently, then multiplies them to get 2D overlap area. Squared to penalize large overlaps more heavily. Uses `torch.triu` to avoid double-counting pairs. Fully vectorized via PyTorch broadcasting with no Python loops.
+
+**Wirelength attraction loss:** Smooth Chebyshev distance (log-sum-exp approximation of Manhattan distance). The same function is used for training in all three phases and for the leaderboard metric, so there is no discrepancy between training and evaluation.
+
+## Key Design Decisions
+
+| Decision | Reasoning |
+|----------|-----------|
+| 3-phase separation | Overlap and wirelength gradients conflict; joint optimization converges poorly |
+| Phase 1 WL-only init | Seeds a good topology before overlap is introduced; directly responsible for low final WL |
+| Exponential λ schedule (k=19) | Linear annealing converges too slowly for large designs; steep early transition is critical for test 10 |
+| Zero-overlap check before `optimizer.step()` | Adam momentum can overshoot; checking after the step misses this |
+| Smooth Chebyshev for WL | Differentiable approximation of Manhattan distance; Worked better than squared Euclidean distance |
+| Patience-based early stop in phase 1 | Avoids wasting epochs once the centroid layout stabilizes |
+
+## Running
+
+```bash
+# Install dependencies
+uv pip install torch --index-url https://download.pytorch.org/whl/cu128
+
+# Run tests 1-10
+uv run python test.py
+
+# With per-phase verbose output
+uv run python test.py --verbose
+
+# Save 4-panel placement visualizations
+uv run python test.py --visualize
+
+# Extra credit (tests 11-12)
+uv run python test.py --extra-credit
+```
+
+## Environment
+
+- Python 3.11, PyTorch, CUDA 13.0
+- GPU: NVIDIA RTX 5070 Ti Mobile
