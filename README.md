@@ -31,7 +31,7 @@ We will review submissions on a rolling basis.
 
 | Rank | Name            | Overlap     | Wirelength (um) | Runtime (s) | Notes                |
 |------|-----------------|-------------|-----------------|-------------|----------------------|
-| 1    | Kevin Joseph    | 0.0000      | 0.2480          | 435.52      | Exponential λ-annealing in phase 2: WL warm-start decays to pure overlap repulsion |
+| 1    | Kevin Joseph    | 0.0000      | 0.2480          | 435.52      | Exponential λ-annealing with min-WL init |
 | 2    | Brayden Rudisill  | 0.0000    | 0.2611          |   50.51     |   Timed on a mac air |
 | 3    | manuhalapeth      | 0.0000    | 0.2630          |  196.8      |                      |
 | 4    | Neil Teje         | 0.0000    | 0.2700          | 24.00s      |                      |
