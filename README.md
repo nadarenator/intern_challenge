@@ -65,7 +65,7 @@ Optimizes purely for wirelength at a low learning rate (`1e-4`). A no-grad overl
 
 ```bash
 # Install dependencies
-uv pip install torch --index-url https://download.pytorch.org/whl/cu128
+uv pip install torch numpy matplotlib
 
 # Run tests 1-10
 uv run python test.py
@@ -73,11 +73,8 @@ uv run python test.py
 # With per-phase verbose output
 uv run python test.py --verbose
 
-# Save 4-panel placement visualizations
+# Save 4-panel placement visualizations in output/
 uv run python test.py --visualize
-
-# Extra credit (tests 11-12)
-uv run python test.py --extra-credit
 ```
 
 ## Environment
